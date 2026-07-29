@@ -443,6 +443,28 @@ static int qfan_mode_show(struct seq_file *s, void *unused)
 }
 DEFINE_SHOW_STORE_ATTRIBUTE(qfan_mode);
 
+/*
+ * settings_key_test: writing anything synthesizes a settings-key tap on the
+ * input device (press+release of KEY_CONFIG). Lets users/CI verify the whole
+ * key->daemon->command pipeline without touching the physical key.
+ */
+static ssize_t settings_key_test_write(struct file *file,
+				       const char __user *ubuf,
+				       size_t count, loff_t *ppos)
+{
+	if (!settings_input)
+		return -ENODEV;
+	input_report_key(settings_input, KEY_CONFIG, 1);
+	input_sync(settings_input);
+	input_report_key(settings_input, KEY_CONFIG, 0);
+	input_sync(settings_input);
+	return count;
+}
+static const struct file_operations settings_key_test_fops = {
+	.owner = THIS_MODULE,
+	.write = settings_key_test_write,
+};
+
 /* ---------- WMI driver ---------- */
 
 static int book14_probe(struct wmi_device *wdev, const void *context)
@@ -532,6 +554,8 @@ static int book14_probe(struct wmi_device *wdev, const void *context)
 
 	dbg_dir = debugfs_create_dir(DRV_NAME, NULL);
 	debugfs_create_file("qfan_mode", 0600, dbg_dir, NULL, &qfan_mode_fops);
+	debugfs_create_file("settings_key_test", 0200, dbg_dir, NULL,
+			    &settings_key_test_fops);
 
 	return 0;
 }

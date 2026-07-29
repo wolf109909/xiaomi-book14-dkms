@@ -60,7 +60,9 @@ Other MIFS-based Xiaomi laptops may partially work but are untested.
   sibling **xiaomi-settings-key** project (userspace daemon) to turn the key
   into a customizable launcher.
 - **Suspend/resume hooks never fail** (root cause of broken suspend removed).
-- debugfs `/sys/kernel/debug/xiaomi-book14/qfan_mode`: raw QFAN get/set.
+- debugfs `/sys/kernel/debug/xiaomi-book14/qfan_mode`: raw QFAN get/set;
+  `settings_key_test` (write-only): synthesizes a settings-key tap, for
+  testing the key→daemon→command pipeline without the physical key.
 
 ## Install (Arch / CachyOS)
 
