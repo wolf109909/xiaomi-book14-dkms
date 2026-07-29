@@ -17,9 +17,9 @@ sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
     # DKMS source
-    install -Dm644 xiaomi-book14.c "$pkgdir/usr/src/$pkgname-$pkgver/xiaomi-book14.c"
-    install -Dm644 Makefile        "$pkgdir/usr/src/$pkgname-$pkgver/Makefile"
-    install -Dm644 dkms.conf       "$pkgdir/usr/src/$pkgname-$pkgver/dkms.conf"
+    install -Dm644 xiaomi-book14.c "$pkgdir/usr/src/xiaomi-book14-$pkgver/xiaomi-book14.c"
+    install -Dm644 Makefile        "$pkgdir/usr/src/xiaomi-book14-$pkgver/Makefile"
+    install -Dm644 dkms.conf       "$pkgdir/usr/src/xiaomi-book14-$pkgver/dkms.conf"
     # blacklist broken mainline drivers, autoload this module
     install -Dm644 xiaomi-book14-modprobe.conf \
         "$pkgdir/usr/lib/modprobe.d/xiaomi-book14.conf"
