@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Xiaomi Book 14 Pro 2026 (Panther Lake, Bitland MIFS v2) platform driver.
+ * Xiaomi Book Pro 14 2026 (Panther Lake, Bitland MIFS v2) platform driver.
  *
  * Reverse-engineered from the laptop's ACPI tables (DSDT/SSDT24 "WMID"
  * device, UID "MIFS") and the firmware's EC shared-memory window.
@@ -614,6 +614,6 @@ static struct wmi_driver book14_driver = {
 };
 module_wmi_driver(book14_driver);
 
-MODULE_AUTHOR("reverse-engineered for Xiaomi Book 14 Pro 2026");
-MODULE_DESCRIPTION("Xiaomi Book 14 Pro 2026 (MIFS v2) platform driver: perf modes, lid, fan tach");
+MODULE_AUTHOR("reverse-engineered for Xiaomi Book Pro 14 2026");
+MODULE_DESCRIPTION("Xiaomi Book Pro 14 2026 (MIFS v2) platform driver: perf modes, lid, fan tach");
 MODULE_LICENSE("GPL");

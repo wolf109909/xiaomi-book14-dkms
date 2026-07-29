@@ -1,8 +1,8 @@
-# Maintainer: reverse-engineered for Xiaomi Book 14 Pro 2026
+# Maintainer: reverse-engineered for Xiaomi Book Pro 14 2026
 pkgname=xiaomi-book14-dkms
 pkgver=1.1.0
-pkgrel=2
-pkgdesc="Platform driver for Xiaomi Book 14 Pro 2026: suspend, lid, fan tach, power profiles (RAPL), settings key (DKMS)"
+pkgrel=3
+pkgdesc="Platform driver for Xiaomi Book Pro 14 2026: suspend, lid, fan tach, power profiles (RAPL), settings key (DKMS)"
 arch=('any')
 license=('GPL-2.0-or-later')
 depends=('dkms')

@@ -1,10 +1,10 @@
-# xiaomi-book14 — platform driver for Xiaomi Book 14 Pro 2026
+# xiaomi-book14 — platform driver for Xiaomi Book Pro 14 2026
 
 Out-of-tree kernel module fixing this laptop's broken WMI/ACPI platform
 support on Linux: **suspend, fan readings, power profiles, and the dedicated
 settings key**.
 
-Supported hardware: **Xiaomi Book 14 Pro 2026** (Intel Core Ultra 5 358H,
+Supported hardware: **Xiaomi Book Pro 14 2026** (Intel Core Ultra 5 358H,
 Panther Lake, Bitland MIFS v2 firmware, DMI `product_name: Xiaomi Book Pro 14`).
 Other MIFS-based Xiaomi laptops may partially work but are untested.
 
