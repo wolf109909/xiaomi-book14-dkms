@@ -1,0 +1,18 @@
+post_install() {
+    dkms add -m xiaomi-book14 -v 1.1.0
+    dkms install -m xiaomi-book14 -v 1.1.0
+    echo "==> xiaomi-book14 installed. Load now with: sudo modprobe xiaomi-book14"
+    echo "==> (bitland_mifs_wmi/redmi_wmi are blacklisted by this package)"
+}
+
+post_upgrade() {
+    dkms install -m xiaomi-book14 -v 1.1.0
+}
+
+pre_upgrade() {
+    dkms remove -m xiaomi-book14 -v 1.1.0 --all 2>/dev/null || true
+}
+
+pre_remove() {
+    dkms remove -m xiaomi-book14 -v 1.1.0 --all 2>/dev/null || true
+}
