@@ -18,7 +18,7 @@ Other MIFS-based Xiaomi laptops may partially work but are untested.
 | Power profiles | broken (ppd errors, bogus AC probe) | 4 profiles via `platform_profile`, each also sets RAPL PL1/PL2 |
 | Settings key (top-right of keyboard) | dead | input device `Xiaomi Book 14 Settings Key` (`KEY_CONFIG`) |
 
-## Why mainline fails (evidence)
+## Why mainline fails
 
 1. **Firmware defect**: `ECON` is referenced by `\_SB.PC00.LPCB.Q_EC._STA`
    (and `H_EC` everywhere) but is **defined in none of the 34 loaded ACPI
@@ -111,17 +111,6 @@ Module parameters (defaults): `pl1_low_power=15000`, `pl1_balanced=35000`,
 sudo pacman -R xiaomi-book14-dkms   # or: sudo dkms remove xiaomi-book14/1.1.0 --all
 ```
 
-## Known limitations (evidence-backed)
-
-- **Fan write / manual fan speed: not possible from the OS.** Full WMAA case
-  analysis shows no fan function; all QFAN values 0x02–0x0A tested live —
-  none forces fan speed; EC fan registers are tach-only; the EC command
-  channel is unresponsive. The EC ramps fans autonomously per mode+thermals.
-- **Fn+K does not reach the OS**: the key is swallowed by the EC keyboard
-  controller; it raises GPE 0x6E but the query value is nowhere readable
-  (ports 0x62/0x66 dead, no EC-window/mailbox change, no i8042/hidraw event).
-  Software mode changes (ppd, sysfs, debugfs) work fine.
-- Hibernate needs swap configuration (out of scope).
 
 ## License
 
