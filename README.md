@@ -17,6 +17,7 @@ Other MIFS-based Xiaomi laptops may partially work but are untested.
 | Fan RPM | not exposed anywhere | `sensors` → hwmon `xiaomi_book14`, left+right fan |
 | Power profiles | broken (ppd errors, bogus AC probe) | 4 profiles via `platform_profile`, each also sets RAPL PL1/PL2 |
 | Settings key (top-right of keyboard) | dead | input device `Xiaomi Book 14 Settings Key` (`KEY_CONFIG`) |
+| CapsLock LED | never lights | follows CapsLock state, restored after suspend |
 
 ## Why mainline fails
 
@@ -59,10 +60,23 @@ Other MIFS-based Xiaomi laptops may partially work but are untested.
   and reports `KEY_CONFIG` on a dedicated input device. Pair it with the
   sibling **xiaomi-settings-key** project (userspace daemon) to turn the key
   into a customizable launcher.
+- **CapsLock LED**: this keyboard requires `i8042.nopnp=1 i8042.dumbkbd=1`;
+  dumbkbd makes i8042 reject all writes to the keyboard, so atkbd's LED path
+  is dead (no `input*::capslock` LED, no EV_LED capability). The LED is
+  driven by the EC in response to the standard PS/2 Set LEDs command `0xED`
+  (verified by poking `/dev/port`: `0xED 0x07` lights it; the EC also
+  mirrors state in ERAM `0x16` bit6 "CPLK"). The module re-enables EV_LED on
+  the keyboard device, listens for `LED_CAPSL` input events (vt/KWin
+  inject them), and sends the `0xED` sequence itself. State is restored on
+  resume. Side effect: each toggle logs two harmless `atkbd serio0:
+  Spurious ACK` lines (the EC's ACKs have no waiter since dumbkbd disabled
+  atkbd's command tracking).
 - **Suspend/resume hooks never fail** (root cause of broken suspend removed).
 - debugfs `/sys/kernel/debug/xiaomi-book14/qfan_mode`: raw QFAN get/set;
   `settings_key_test` (write-only): synthesizes a settings-key tap, for
-  testing the key→daemon→command pipeline without the physical key.
+  testing the key→daemon→command pipeline without the physical key;
+  `ec_dump`: hex dump of the EC window; `ec_write`: write a byte into the
+  EC window (`"0xOFF 0xVAL"`).
 
 ## Install (Arch / CachyOS)
 
@@ -73,7 +87,7 @@ makepkg -si
 ```
 
 The package:
-- installs the source to `/usr/src/xiaomi-book14-1.1.0` and registers it with
+- installs the source to `/usr/src/xiaomi-book14-1.2.0` and registers it with
   **DKMS** (auto-rebuilds on every kernel update),
 - **blacklists** the broken mainline drivers
   (`/usr/lib/modprobe.d/xiaomi-book14.conf`),
@@ -85,9 +99,9 @@ After install: `sudo modprobe xiaomi-book14` (or reboot).
 ## Install (other distros, manual DKMS)
 
 ```sh
-sudo cp xiaomi-book14.c Makefile dkms.conf /usr/src/xiaomi-book14-1.1.0/
-sudo dkms add xiaomi-book14/1.1.0
-sudo dkms install xiaomi-book14/1.1.0
+sudo cp xiaomi-book14.c Makefile dkms.conf /usr/src/xiaomi-book14-1.2.0/
+sudo dkms add xiaomi-book14/1.2.0
+sudo dkms install xiaomi-book14/1.2.0
 echo xiaomi-book14 | sudo tee /etc/modules-load.d/xiaomi-book14.conf
 printf 'blacklist bitland_mifs_wmi\nblacklist redmi_wmi\n' | sudo tee /etc/modprobe.d/xiaomi-book14.conf
 sudo modprobe xiaomi-book14
@@ -108,7 +122,7 @@ Module parameters (defaults): `pl1_low_power=15000`, `pl1_balanced=35000`,
 ## Uninstall
 
 ```sh
-sudo pacman -R xiaomi-book14-dkms   # or: sudo dkms remove xiaomi-book14/1.1.0 --all
+sudo pacman -R xiaomi-book14-dkms   # or: sudo dkms remove xiaomi-book14/1.2.0 --all
 ```
 
 

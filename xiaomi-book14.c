@@ -46,6 +46,14 @@
 #define XIAOMI_MIFS_METHOD_GUID	"B60BFB48-3E5B-49E4-A0E9-8CFFE1B3434B"
 #define XIAOMI_MIFS_EVENT_GUID	"46C93E13-EE9B-4262-8488-563BCA757FEF"
 
+/* i8042 ports (CapsLock LED path; see kbdled below) */
+#define I8042_DATA_REG		0x60
+#define I8042_STATUS_REG	0x64
+#define I8042_STR_IBF		0x02
+#define I8042_STR_OBF		0x01
+#define KBD_CMD_SET_LEDS	0xED
+#define KBD_LED_CAPSL		0x04
+
 /* WMAA protocol (SSDT24): 32-byte in/out, little-endian */
 #define MIFS_OP_GET		0xFA00
 #define MIFS_OP_SET		0xFB00
@@ -129,6 +137,128 @@ static u8 last_mbox_evfn;
 static acpi_handle qec_handle;
 static struct input_dev *settings_input;
 static bool settings_down;
+
+/* ---------- CapsLock LED ----------
+ *
+ * This keyboard requires i8042.nopnp=1 + i8042.dumbkbd=1 to function.
+ * dumbkbd makes i8042 reject all writes to the keyboard, so atkbd's LED
+ * path is dead and the CapsLock LED never lights (the LED is driven by
+ * the EC in response to the standard PS/2 Set LEDs command 0xED; the EC
+ * also mirrors the state in ERAM 0x16 bit6 "CPLK"). The input core still
+ * emits EV_LED events (vt/KWin/libinput set them), so we listen for
+ * LED_CAPSL and send the 0xED sequence ourselves. atkbd also drops the
+ * device's EV_LED capability under dumbkbd, so we re-enable it on
+ * connect: that unblocks vt/KWin LED state injection, which then
+ * reaches every handler bound to the device (atkbd's own write fails
+ * harmlessly under dumbkbd; ours does the work).
+ */
+static u8 kbdled_state;
+static void kbdled_work_fn(struct work_struct *work);
+static DECLARE_WORK(kbdled_work, kbdled_work_fn);
+
+static int kbdled_wait_status(u8 bit, int timeout_us)
+{
+	int i;
+
+	for (i = 0; i < timeout_us / 10; i++) {
+		if (inb(I8042_STATUS_REG) & bit)
+			return 0;
+		udelay(10);
+	}
+	return -ETIMEDOUT;
+}
+
+/* process context only: wait for the EC's ACK before the data byte */
+static void kbdled_send(u8 leds)
+{
+	int i;
+
+	for (i = 0; i < 1000; i++) { /* wait IBF clear */
+		if (!(inb(I8042_STATUS_REG) & I8042_STR_IBF))
+			break;
+		udelay(10);
+	}
+	outb(KBD_CMD_SET_LEDS, I8042_DATA_REG);
+	if (kbdled_wait_status(I8042_STR_OBF, 100000)) /* ACK for 0xED */
+		return;
+	msleep(1);
+	outb(leds, I8042_DATA_REG);
+	kbdled_wait_status(I8042_STR_OBF, 100000);       /* ACK for data */
+	kbdled_state = leds;
+}
+
+static void kbdled_work_fn(struct work_struct *work)
+{
+	kbdled_send(kbdled_state);
+}
+
+static void kbdled_event(struct input_handle *handle, unsigned int type,
+			 unsigned int code, int value)
+{
+	if (type == EV_LED && code == LED_CAPSL) {
+		kbdled_state = value ? KBD_LED_CAPSL : 0;
+		schedule_work(&kbdled_work);
+	}
+}
+
+static int kbdled_connect(struct input_handler *handler, struct input_dev *dev,
+			  const struct input_device_id *id)
+{
+	struct input_handle *handle;
+	int ret;
+
+	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+	if (!handle)
+		return -ENOMEM;
+	handle->dev = dev;
+	handle->handler = handler;
+	handle->name = DRV_NAME "-kbdled";
+
+	ret = input_register_handle(handle);
+	if (ret)
+		goto err_free;
+	ret = input_open_device(handle);
+	if (ret)
+		goto err_unregister;
+
+	/* re-enable LED events on the device (dropped under dumbkbd) */
+	__set_bit(EV_LED, dev->evbit);
+	__set_bit(LED_CAPSL, dev->ledbit);
+
+	/* sync LED with the current OS capslock state */
+	kbdled_send(test_bit(LED_CAPSL, dev->led) ? KBD_LED_CAPSL : 0);
+	return 0;
+
+err_unregister:
+	input_unregister_handle(handle);
+err_free:
+	kfree(handle);
+	return ret;
+}
+
+static void kbdled_disconnect(struct input_handle *handle)
+{
+	input_close_device(handle);
+	input_unregister_handle(handle);
+	kfree(handle);
+	cancel_work_sync(&kbdled_work);
+}
+
+static const struct input_device_id kbdled_ids[] = {
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+		.evbit = { BIT_MASK(EV_KEY) },
+	},
+	{ },
+};
+
+static struct input_handler kbdled_handler = {
+	.event = kbdled_event,
+	.connect = kbdled_connect,
+	.disconnect = kbdled_disconnect,
+	.name = DRV_NAME "_kbdled",
+	.id_table = kbdled_ids,
+};
 
 /* ---------- WMAA ---------- */
 
@@ -465,6 +595,39 @@ static const struct file_operations settings_key_test_fops = {
 	.write = settings_key_test_write,
 };
 
+/* ec_write: "0xOFF 0xVAL" writes one byte into the EC shared-memory window */
+static ssize_t ec_write_write(struct file *file, const char __user *ubuf,
+			      size_t count, loff_t *ppos)
+{
+	char buf[32];
+	unsigned int off, val;
+
+	if (count >= sizeof(buf))
+		return -EINVAL;
+	if (copy_from_user(buf, ubuf, count))
+		return -EFAULT;
+	buf[count] = 0;
+	if (sscanf(buf, "%i %i", &off, &val) != 2 || off >= EC_MEM_SIZE || val > 0xff)
+		return -EINVAL;
+	writeb(val, ec_mem + off);
+	return count;
+}
+static const struct file_operations ec_write_fops = {
+	.owner = THIS_MODULE,
+	.write = ec_write_write,
+};
+
+/* ec_dump: hex dump of the EC shared-memory window (0x100 bytes) */
+static int ec_dump_show(struct seq_file *s, void *unused)
+{
+	int i;
+
+	for (i = 0; i < EC_MEM_SIZE; i += 16)
+		seq_printf(s, "%02x: %*phN\n", i, 16, ec_mem + i);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(ec_dump);
+
 /* ---------- WMI driver ---------- */
 
 static int book14_probe(struct wmi_device *wdev, const void *context)
@@ -549,6 +712,10 @@ static int book14_probe(struct wmi_device *wdev, const void *context)
 				acpi_format_exception(st));
 	}
 
+	ret = input_register_handler(&kbdled_handler);
+	if (ret)
+		dev_warn(&wdev->dev, "capslock LED handler failed: %d\n", ret);
+
 	/* align RAPL with the current mode */
 	rapl_set_pl1(qfan_to_pl1(readb(ec_mem + EC_REG_QFAN)));
 
@@ -556,6 +723,8 @@ static int book14_probe(struct wmi_device *wdev, const void *context)
 	debugfs_create_file("qfan_mode", 0600, dbg_dir, NULL, &qfan_mode_fops);
 	debugfs_create_file("settings_key_test", 0200, dbg_dir, NULL,
 			    &settings_key_test_fops);
+	debugfs_create_file("ec_write", 0200, dbg_dir, NULL, &ec_write_fops);
+	debugfs_create_file("ec_dump", 0400, dbg_dir, NULL, &ec_dump_fops);
 
 	return 0;
 }
@@ -563,6 +732,8 @@ static int book14_probe(struct wmi_device *wdev, const void *context)
 static void book14_remove(struct wmi_device *wdev)
 {
 	debugfs_remove_recursive(dbg_dir);
+	input_unregister_handler(&kbdled_handler);
+	cancel_work_sync(&kbdled_work);
 	if (qec_handle)
 		acpi_remove_notify_handler(qec_handle, ACPI_DEVICE_NOTIFY,
 					   book14_ec_notify);
@@ -582,6 +753,7 @@ static int book14_suspend(struct device *dev)
 {
 	cancel_delayed_work_sync(&mbox_poll_work);
 	cancel_delayed_work_sync(&ec_poll_work);
+	cancel_work_sync(&kbdled_work);
 	return 0;
 }
 
@@ -591,6 +763,7 @@ static int book14_resume(struct device *dev)
 	last_qfan = 0xff;
 	schedule_delayed_work(&ec_poll_work, msecs_to_jiffies(0));
 	schedule_delayed_work(&mbox_poll_work, msecs_to_jiffies(0));
+	kbdled_send(kbdled_state); /* restore CapsLock LED */
 	return 0;
 }
 
