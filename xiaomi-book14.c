@@ -272,21 +272,31 @@ static int mifs_call(u16 op, u16 fun2, u16 fun3, u32 fun4, struct mifs_out *out)
 		.fun3 = cpu_to_le16(fun3),
 		.fun4 = cpu_to_le32(fun4),
 	};
-	struct wmi_buffer in_buf = { .length = sizeof(in), .data = &in };
-	struct wmi_buffer out_buf = { 0 };
+	const struct acpi_buffer in_buf = { sizeof(in), &in };
+	struct acpi_buffer out_buf = { ACPI_ALLOCATE_BUFFER, NULL };
+	union acpi_object *obj;
+	acpi_status status;
 	struct mifs_out res;
-	int ret;
 
 	if (!mifs_wdev)
 		return -ENODEV;
 
 	guard(mutex)(&call_lock);
-	ret = wmidev_invoke_method(mifs_wdev, 0, 1, &in_buf, &out_buf, sizeof(res));
-	if (ret)
-		return ret;
+	/* wmidev_evaluate_method: present in both old and new kernels
+	 * (unlike the 6.15+ struct wmi_buffer / wmidev_invoke_method API)
+	 */
+	status = wmidev_evaluate_method(mifs_wdev, 0, 1, &in_buf, &out_buf);
+	if (ACPI_FAILURE(status))
+		return -EIO;
 
-	memcpy(&res, out_buf.data, sizeof(res));
-	kfree(out_buf.data);
+	obj = out_buf.pointer;
+	if (!obj || obj->type != ACPI_TYPE_BUFFER ||
+	    obj->buffer.length < sizeof(res)) {
+		kfree(obj);
+		return -EIO;
+	}
+	memcpy(&res, obj->buffer.pointer, sizeof(res));
+	kfree(obj);
 
 	if (le16_to_cpu(res.sger) != MIFS_STATUS_OK) {
 		pr_debug("WMAA %04x/%04x failed, sger=%04x\n", op, fun2,
