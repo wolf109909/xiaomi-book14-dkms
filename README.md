@@ -96,6 +96,19 @@ The package:
 
 After install: `sudo modprobe xiaomi-book14` (or reboot).
 
+## Closed-lid AC transitions
+
+The firmware exposes the AC adapter as `ADP1` and registers it as a wakeup
+source. On this machine, an AC plug/unplug notification could wake a closed
+lid from `s2idle`, turn on the display, and show the login screen. The package
+installs a udev rule that sets only `ADP1`'s
+`/sys/class/power_supply/ADP1/power/wakeup` to `disabled`.
+
+This preserves charger-state reporting after the next resume and does not
+disable lid, power-button, keyboard, or other wake sources. Verified live:
+with the lid closed and suspended, both AC unplug and AC plug remained asleep;
+opening the lid still resumed the laptop normally.
+
 ## Install (other distros, manual DKMS)
 
 ```sh

@@ -1,0 +1,2 @@
+# AC adapter transitions must update power state without waking a closed lid.
+ACTION=="add|change", SUBSYSTEM=="power_supply", KERNEL=="ADP1", ATTR{power/wakeup}="disabled"
