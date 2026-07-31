@@ -92,17 +92,21 @@ The package:
 - **blacklists** the broken mainline drivers
   (`/usr/lib/modprobe.d/xiaomi-book14.conf`),
 - **autoloads** the module at boot
-  (`/usr/lib/modules-load.d/xiaomi-book14.conf`).
+  (`/usr/lib/modules-load.d/xiaomi-book14.conf`),
+- installs the closed-lid AC wake workaround and boot service
+  (`/usr/lib/udev/rules.d/99-xiaomi-book14-adp1-wakeup.rules`,
+  `/usr/lib/systemd/system/xiaomi-book14-adp1-wakeup.service`).
 
 After install: `sudo modprobe xiaomi-book14` (or reboot).
 
 ## Closed-lid AC transitions
 
 The firmware exposes the AC adapter as `ADP1` and registers it as a wakeup
-source. On this machine, an AC plug/unplug notification could wake a closed
-lid from `s2idle`, turn on the display, and show the login screen. The package
+source. The package
 installs a udev rule that sets only `ADP1`'s
-`/sys/class/power_supply/ADP1/power/wakeup` to `disabled`.
+`/sys/class/power_supply/ADP1/power/wakeup` to `disabled`, plus an enabled
+`xiaomi-book14-adp1-wakeup.service` that reapplies the setting after udev
+settles at boot.
 
 This preserves charger-state reporting after the next resume and does not
 disable lid, power-button, keyboard, or other wake sources. Verified live:

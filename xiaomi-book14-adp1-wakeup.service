@@ -1,0 +1,13 @@
+[Unit]
+Description=Disable Xiaomi Book Pro 14 AC-adapter wakeup
+Wants=systemd-udev-settle.service
+After=systemd-udev-settle.service
+ConditionPathExists=/sys/class/power_supply/ADP1/power/wakeup
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'printf disabled > /sys/class/power_supply/ADP1/power/wakeup'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
