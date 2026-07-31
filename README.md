@@ -119,6 +119,29 @@ Module parameters (defaults): `pl1_low_power=15000`, `pl1_balanced=35000`,
 `pl1_balanced_perf=45000`, `pl1_performance=61000` (mW), `poll_ms=250`,
 `mbox_poll_ms=50`.
 
+## Fan idle behavior
+
+The EC owns the fan curve; this module only reads the two tachometers. Live
+logging in low-power/QFAN `0x02` established the EC's hysteresis policy:
+
+- fans remain off while EC sensor `TSR3` is below roughly 43–44°C,
+- they start near 44°C and ramp to the minimum non-zero speed (~2600–2800 RPM),
+- they stop again only after `TSR3` cools to roughly 37–38°C.
+
+This explains why the fans may appear stuck near 2700 RPM after a CPU burst:
+idle chassis temperature sits inside that hysteresis band. Suspend forces the
+EC into its fan-off state, so after opening the lid the fans stay at 0 until
+the upper threshold is crossed again. During a measured run the fans stopped
+naturally at `TSR3=38°C`, then restarted after passive heat soak raised it to
+43°C. The physical keyboard/chassis area remains cooler as a result.
+
+Lowering low-power RAPL PL1 from 15W to 8W and applying PowerTOP tunables did
+not materially lower the idle EC temperatures or change the thresholds; PL1
+limits CPU load power, not platform/chassis idle heat. Full WMAA and EC field
+analysis found no OS fan-duty or fan-stop control, so forcing fan-off would
+require an unknown EC command and would bypass firmware thermal safety. Fan
+RPM values reported by hwmon are accurate, including the verified 0 RPM state.
+
 ## Uninstall
 
 ```sh
