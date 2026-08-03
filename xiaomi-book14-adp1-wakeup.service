@@ -6,7 +6,7 @@ ConditionPathExists=/sys/class/power_supply/ADP1/power/wakeup
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'printf disabled > /sys/class/power_supply/ADP1/power/wakeup'
+ExecStart=/bin/sh -c 'printf disabled > /sys/class/power_supply/ADP1/power/wakeup; for f in /sys/class/power_supply/ucsi-source-psy-*/power/wakeup; do [ -e "$f" ] && printf disabled > "$f"; done'
 RemainAfterExit=yes
 
 [Install]
