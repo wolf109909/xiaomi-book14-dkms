@@ -87,10 +87,10 @@ API (`wmidev_invoke_method`).
   mirrors state in ERAM `0x16` bit6 "CPLK"). The module re-enables EV_LED on
   the built-in AT keyboard only (USB keyboards/mice are left alone), listens
   for `LED_CAPSL` input events (vt/KWin inject them), and sends the `0xED`
-  sequence itself, serialized against other i8042 users. State is restored
-  on resume. Side effect: each toggle logs two harmless `atkbd serio0:
-  Spurious ACK` lines (the EC's ACKs have no waiter since dumbkbd disabled
-  atkbd's command tracking).
+  sequence itself, serialized against other i8042 users. The EC's ACKs are
+  caught with an i8042 filter (so atkbd no longer logs them as `Spurious
+  ACK`); if another driver already owns the filter slot, the module falls
+  back to fixed delays. State is restored on resume.
 - **Suspend/resume hooks never fail** (root cause of broken suspend removed).
 - debugfs `/sys/kernel/debug/xiaomi-book14/qfan_mode`: raw QFAN get/set;
   `settings_key_test` (write-only): synthesizes a settings-key tap, for

@@ -28,6 +28,7 @@
 
 #include <linux/acpi.h>
 #include <linux/cleanup.h>
+#include <linux/completion.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -96,11 +97,13 @@
 #define I8042_DATA_REG		0x60
 #define I8042_STATUS_REG	0x64
 #define I8042_STR_IBF		0x02
-#define I8042_STR_OBF		0x01
+#define I8042_STR_AUXDATA	0x20
 #define KBD_CMD_SET_LEDS	0xED
+#define KBD_REPLY_ACK		0xFA
+#define KBD_REPLY_RESEND	0xFE
 #define KBD_LED_CAPSL		0x04
 #define KBD_IBF_TIMEOUT_US	10000
-#define KBD_ACK_TIMEOUT_US	100000
+#define KBD_ACK_TIMEOUT_MS	100
 
 #define STATE_UNKNOWN		0xff
 #define POLL_MIN_MS		10
@@ -195,6 +198,10 @@ struct book14 {
 	struct input_handle *kbd_handle;
 	struct work_struct kbd_work;
 	u8 kbd_leds;
+	bool kbd_filter;		/* our i8042 filter is installed */
+	bool kbd_wait_ack;		/* filter: next kbd ACK/RESEND is ours */
+	u8 kbd_reply;
+	struct completion kbd_ack;
 
 	struct dentry *dbg;
 };
@@ -655,41 +662,70 @@ static void book14_stop_polling(void *data)
  * LED_CAPSL on the built-in keyboard and send the 0xED sequence ourselves.
  * atkbd also drops the device's EV_LED capability under dumbkbd, so we
  * re-enable it on connect: that unblocks vt/KWin LED state injection.
+ *
+ * The EC's ACK (0xFA) arrives as an ordinary keyboard byte: the i8042 IRQ
+ * handler reads it under its own spinlock (i8042_lock_chip() does not keep
+ * it out), so polling the status register for it races with the IRQ. An
+ * i8042 filter sees every byte instead: it completes kbd_ack and swallows
+ * the ACKs we asked for, which also stops atkbd logging them as spurious.
  */
-static int book14_kbd_wait(u8 mask, bool set, u32 timeout_us)
+static bool book14_i8042_filter(unsigned char data, unsigned char str,
+				struct serio *serio, void *context)
 {
-	u8 st;
+	struct book14 *b = context;
 
-	return read_poll_timeout_atomic(inb, st, !!(st & mask) == set,
-					10, timeout_us, false,
-					I8042_STATUS_REG);
+	/* runs in IRQ context under the i8042 spinlock */
+	if (!READ_ONCE(b->kbd_wait_ack) || (str & I8042_STR_AUXDATA) ||
+	    (data != KBD_REPLY_ACK && data != KBD_REPLY_RESEND))
+		return false;
+
+	WRITE_ONCE(b->kbd_wait_ack, false);
+	b->kbd_reply = data;
+	complete(&b->kbd_ack);
+	return true;
 }
 
-/* process context only: wait for the EC's ACK before the data byte */
-static int book14_kbd_send(u8 leds)
+/* send one byte to the keyboard (EC) and wait for its ACK if we can see it */
+static int book14_kbd_write(struct book14 *b, u8 byte)
+{
+	u8 st;
+	int ret;
+
+	ret = read_poll_timeout(inb, st, !(st & I8042_STR_IBF), 50,
+				KBD_IBF_TIMEOUT_US, false, I8042_STATUS_REG);
+	if (ret)
+		return ret;
+
+	if (!b->kbd_filter) {
+		/* no filter (another driver owns it): give the EC time instead */
+		outb(byte, I8042_DATA_REG);
+		usleep_range(2000, 3000);
+		return 0;
+	}
+
+	reinit_completion(&b->kbd_ack);
+	WRITE_ONCE(b->kbd_wait_ack, true);
+	outb(byte, I8042_DATA_REG);
+
+	if (!wait_for_completion_timeout(&b->kbd_ack,
+					 msecs_to_jiffies(KBD_ACK_TIMEOUT_MS))) {
+		WRITE_ONCE(b->kbd_wait_ack, false);
+		return -ETIMEDOUT;
+	}
+	return b->kbd_reply == KBD_REPLY_ACK ? 0 : -EIO;
+}
+
+/* process context only (sleeps) */
+static int book14_kbd_send(struct book14 *b, u8 leds)
 {
 	int ret;
 
 	i8042_lock_chip();
-
-	ret = book14_kbd_wait(I8042_STR_IBF, false, KBD_IBF_TIMEOUT_US);
-	if (ret)
-		goto out;
-	outb(KBD_CMD_SET_LEDS, I8042_DATA_REG);
-
-	ret = book14_kbd_wait(I8042_STR_OBF, true, KBD_ACK_TIMEOUT_US);
-	if (ret)
-		goto out;
-	usleep_range(1000, 2000);
-
-	ret = book14_kbd_wait(I8042_STR_IBF, false, KBD_IBF_TIMEOUT_US);
-	if (ret)
-		goto out;
-	outb(leds, I8042_DATA_REG);
-
-	/* ACK for the data byte; nothing useful to do if it is missing */
-	book14_kbd_wait(I8042_STR_OBF, true, KBD_ACK_TIMEOUT_US);
-out:
+	ret = book14_kbd_write(b, KBD_CMD_SET_LEDS);
+	if (!ret) {
+		usleep_range(1000, 2000);
+		ret = book14_kbd_write(b, leds);
+	}
 	i8042_unlock_chip();
 	return ret;
 }
@@ -697,9 +733,11 @@ out:
 static void book14_kbd_work(struct work_struct *work)
 {
 	struct book14 *b = container_of(work, struct book14, kbd_work);
+	int ret;
 
-	if (book14_kbd_send(READ_ONCE(b->kbd_leds)))
-		dev_dbg(&b->wdev->dev, "CapsLock LED update timed out\n");
+	ret = book14_kbd_send(b, READ_ONCE(b->kbd_leds));
+	if (ret)
+		dev_dbg(&b->wdev->dev, "CapsLock LED update failed: %d\n", ret);
 }
 
 static void book14_kbd_event(struct input_handle *handle, unsigned int type,
@@ -745,6 +783,11 @@ static int book14_kbd_connect(struct input_handler *handler,
 	if (ret)
 		goto err_unregister;
 
+	/* the i8042 filter slot is global: fine if another driver holds it */
+	b->kbd_filter = !i8042_install_filter(book14_i8042_filter, b);
+	if (!b->kbd_filter)
+		dev_info(&b->wdev->dev, "i8042 filter in use, CapsLock LED without ACK tracking\n");
+
 	/* re-enable LED events on the device (dropped under dumbkbd) */
 	__set_bit(EV_LED, dev->evbit);
 	__set_bit(LED_CAPSL, dev->ledbit);
@@ -769,6 +812,11 @@ static void book14_kbd_disconnect(struct input_handle *handle)
 	input_close_device(handle);
 	input_unregister_handle(handle);
 	cancel_work_sync(&b->kbd_work);
+
+	if (b->kbd_filter) {
+		i8042_remove_filter(book14_i8042_filter);
+		b->kbd_filter = false;
+	}
 
 	/* undo our EV_LED so a reload (or atkbd) sees the device as it was */
 	__clear_bit(EV_LED, handle->dev->evbit);
@@ -803,6 +851,7 @@ static void book14_kbd_init(struct book14 *b)
 	int ret;
 
 	INIT_WORK(&b->kbd_work, book14_kbd_work);
+	init_completion(&b->kbd_ack);
 	b->kbd_handler = (struct input_handler) {
 		.event = book14_kbd_event,
 		.connect = book14_kbd_connect,
