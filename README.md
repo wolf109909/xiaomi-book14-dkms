@@ -69,7 +69,8 @@ API (`wmidev_invoke_method`).
   calls `platform_profile_notify()`. RAPL limits are re-applied after resume
   (firmware may restore its own) and when the `pl1_*` parameters change.
   If the firmware has locked the power-limit MSR, RAPL control switches
-  itself off with a single warning.
+  itself off with a single warning. Unloading the module puts the
+  firmware's original PL1/PL2 back.
 - **Settings key**: watches the XGNS mailbox (0x6FDB8000, `mbox_addr`) for EC
   hotkey events `EVFN=0x25` (press) / `0x26` (release) and reports
   `KEY_CONFIG` on a dedicated input device. Pair it with the sibling
@@ -161,8 +162,8 @@ powerprofilesctl set power-saver|balanced|performance   # via power-profiles-dae
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `pl1_low_power` / `pl1_balanced` / `pl1_balanced_perf` / `pl1_performance` | 15000 / 35000 / 45000 / 61000 | PL1 in mW (PL2 = 1.25 × PL1); writable at runtime via `/sys/module/xiaomi_book14/parameters/`, applied within `poll_ms` |
-| `rapl` | `Y` | set `N` to leave RAPL limits alone (e.g. if you tune them with thermald or powercap) |
+| `pl1_low_power` / `pl1_balanced` / `pl1_balanced_perf` / `pl1_performance` | 15000 / 35000 / 45000 / 61000 | PL1 in mW (PL2 = 1.25 × PL1); writable at runtime via `/sys/module/xiaomi_book14/parameters/`, applied within `poll_ms`; `0` = use the firmware's limits in that profile |
+| `rapl` | `Y` | set `N` to leave RAPL limits alone (e.g. if you tune them with thermald or powercap); switching it off at runtime restores the firmware's limits |
 | `poll_ms` | 250 | EC poll: lid, perf mode, guaranteed hotkey latency (min 10) |
 | `mbox_poll_ms` | 50 | fast hotkey poll while the CPU is awake anyway (min 10) |
 | `mbox_addr` | `0x6FDB8000` | XGNS mailbox physical address; `0` disables the settings key |

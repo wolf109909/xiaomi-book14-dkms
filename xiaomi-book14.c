@@ -91,6 +91,7 @@
 /* RAPL: PL1 in bits 14:0, PL2 in bits 46:32 of MSR_PKG_POWER_LIMIT */
 #define RAPL_LIMIT_MASK		0x7fffULL
 #define RAPL_PL2_SHIFT		32
+#define RAPL_POWER_FIELDS	(RAPL_LIMIT_MASK | (RAPL_LIMIT_MASK << RAPL_PL2_SHIFT))
 #define RAPL_LOCK		BIT_ULL(63)
 
 /* i8042 ports (CapsLock LED path; see the kbd_* helpers below) */
@@ -191,8 +192,10 @@ struct book14 {
 	u8 last_evfn;
 	bool settings_down;
 
-	int cur_pl1;
+	int cur_pl1;			/* -1: firmware limits in effect */
 	bool rapl_failed;
+	bool rapl_saved;
+	u64 rapl_orig;			/* firmware PL1/PL2 before our first write */
 
 	struct input_handler kbd_handler;
 	struct input_handle *kbd_handle;
@@ -358,11 +361,40 @@ static int qfan_to_pl1(u8 q)
 
 /* ---------- RAPL ---------- */
 
+/* put back the PL1/PL2 the firmware had before we first changed them */
+static void book14_rapl_restore(struct book14 *b)
+{
+	u64 limit_msr;
+
+	lockdep_assert_held(&b->rapl_lock);
+
+	if (!b->rapl_saved || b->cur_pl1 < 0)
+		return;
+	b->cur_pl1 = -1;
+
+	if (rdmsrq_safe(MSR_PKG_POWER_LIMIT, &limit_msr) ||
+	    (limit_msr & RAPL_LOCK))
+		return;
+	limit_msr &= ~RAPL_POWER_FIELDS;
+	limit_msr |= b->rapl_orig & RAPL_POWER_FIELDS;
+	if (!wrmsrq_safe(MSR_PKG_POWER_LIMIT, limit_msr))
+		dev_dbg(&b->wdev->dev, "RAPL firmware limits restored\n");
+}
+
+static void book14_rapl_release(void *data)
+{
+	struct book14 *b = data;
+
+	guard(mutex)(&b->rapl_lock);
+	book14_rapl_restore(b);
+}
+
 /*
  * Program PL1 (and PL2 = 1.25 x PL1) for the given perf mode. Cheap no-op
  * when the target is already applied, so it is safe to call every poll:
  * this also picks up pl1_* parameter changes and re-applies the limits after
- * resume (firmware may restore its own values).
+ * resume (firmware may restore its own values). With rapl=N, or a pl1_*
+ * parameter of 0 for the current mode, the firmware limits are restored.
  */
 static void book14_rapl_apply(struct book14 *b, u8 qfan)
 {
@@ -371,12 +403,16 @@ static void book14_rapl_apply(struct book14 *b, u8 qfan)
 	u32 uw_per_unit;
 	int mw = qfan_to_pl1(qfan);
 
-	if (!READ_ONCE(rapl) || mw <= 0)
-		return;
-
 	guard(mutex)(&b->rapl_lock);
 
-	if (b->rapl_failed || mw == b->cur_pl1)
+	if (b->rapl_failed)
+		return;
+
+	if (!READ_ONCE(rapl) || mw <= 0) {
+		book14_rapl_restore(b);
+		return;
+	}
+	if (mw == b->cur_pl1)
 		return;
 
 	if (rdmsrq_safe(MSR_RAPL_POWER_UNIT, &unit_msr) ||
@@ -389,6 +425,11 @@ static void book14_rapl_apply(struct book14 *b, u8 qfan)
 		return;
 	}
 
+	if (!b->rapl_saved) {
+		b->rapl_orig = limit_msr;
+		b->rapl_saved = true;
+	}
+
 	/* power unit = 1/2^(bits 3:0) W */
 	uw_per_unit = 1000000U >> (unit_msr & 0xf);
 	if (!uw_per_unit)
@@ -399,7 +440,7 @@ static void book14_rapl_apply(struct book14 *b, u8 qfan)
 	pl1 = min(pl1, RAPL_LIMIT_MASK);
 	pl2 = min(pl2, RAPL_LIMIT_MASK);
 
-	limit_msr &= ~(RAPL_LIMIT_MASK | (RAPL_LIMIT_MASK << RAPL_PL2_SHIFT));
+	limit_msr &= ~RAPL_POWER_FIELDS;
 	limit_msr |= pl1 | (pl2 << RAPL_PL2_SHIFT);
 
 	if (wrmsrq_safe(MSR_PKG_POWER_LIMIT, limit_msr))
@@ -1167,6 +1208,14 @@ static int book14_probe(struct wmi_device *wdev, const void *context)
 	if (!b->ec)
 		return dev_err_probe(dev, -ENOMEM, "cannot map EC window %#x\n",
 				     EC_MEM_BASE);
+
+	/*
+	 * Registered before platform_profile and the pollers, the only callers
+	 * of book14_rapl_apply(), so it runs after both are gone on unbind.
+	 */
+	ret = devm_add_action_or_reset(dev, book14_rapl_release, b);
+	if (ret)
+		return ret;
 
 	book14_mbox_init(b);
 
