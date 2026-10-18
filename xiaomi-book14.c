@@ -472,16 +472,34 @@ static umode_t book14_hwmon_visible(const void *data,
 	return 0444;
 }
 
+/*
+ * u16 LE at an odd offset: two byte reads, no unaligned MMIO access. The EC
+ * updates the bytes one at a time, so a read straddling an update can mix
+ * old and new halves (e.g. 2815 -> 2816 read as 3071): re-read until the
+ * high byte is stable.
+ */
+static u16 book14_ec_read16(struct book14 *b, unsigned int off)
+{
+	u8 lo, hi, hi2 = readb(b->ec + off + 1);
+	int tries = 3;
+
+	do {
+		hi = hi2;
+		lo = readb(b->ec + off);
+		hi2 = readb(b->ec + off + 1);
+	} while (hi != hi2 && --tries);
+
+	return lo | (hi2 << 8);
+}
+
 static int book14_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 			     u32 attr, int channel, long *val)
 {
 	struct book14 *b = dev_get_drvdata(dev);
-	unsigned int off = channel ? EC_REG_FAN2 : EC_REG_FAN1;
 
 	if (type != hwmon_fan || attr != hwmon_fan_input)
 		return -EOPNOTSUPP;
-	/* u16 LE at an odd offset: two byte reads, no unaligned MMIO access */
-	*val = readb(b->ec + off) | (readb(b->ec + off + 1) << 8);
+	*val = book14_ec_read16(b, channel ? EC_REG_FAN2 : EC_REG_FAN1);
 	return 0;
 }
 
