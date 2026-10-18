@@ -58,9 +58,10 @@ fi
 echo "== checkpatch --strict"
 checkpatch="$KDIR/scripts/checkpatch.pl"
 if [ -x "$checkpatch" ]; then
-	# LINUX_VERSION_CODE: intentional out-of-tree minimum-version guard
+	# LINUX_VERSION_CODE: intentional out-of-tree version guards
+	# ALLOC_WITH_SIZEOF: kzalloc_obj() only exists since 7.0
 	"$checkpatch" --no-tree --strict --quiet --show-types \
-		--ignore LINUX_VERSION_CODE,CONSTANT_COMPARISON \
+		--ignore LINUX_VERSION_CODE,CONSTANT_COMPARISON,ALLOC_WITH_SIZEOF \
 		-f xiaomi-book14.c && echo "ok" || status=1
 else
 	echo "check.sh: $checkpatch not found, skipping"

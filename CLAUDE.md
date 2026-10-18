@@ -27,8 +27,11 @@ guard()/__free cleanup, no version #ifdefs beyond the 6.16 floor).
 
 - **WMAA calls** `book14_mifs_call()`: 32-byte LE in/out buffers, success iff
   `SGER == 0x8000`; `0xE000` = unsupported. Only FUN2 0x0800 (perf mode)
-  is used. Uses `wmidev_evaluate_method()` (acpi_buffer API) for pre-6.15
-  compat of that call.
+  is used. `book14_wmaa()` uses `wmidev_invoke_method()` on 7.0+ (the old
+  `wmidev_evaluate_method()` is deprecated there) and the acpi_buffer API
+  on 6.16–6.19 — the only version `#if` besides the 6.16 floor.
+- Mainline has its own `bitland-mifs-wmi.c` on the same GUID since 7.1
+  (by Mingyou Chen, targets other MIFS firmware); the package blacklists it.
 - **EC window** MMIO `0xFE0B0300`+0x100 (`devm_ioremap`): `0x14` bit0 lid,
   `0x68` QFAN perf mode, `0x69`/`0x6B` LE16 fan RPM. ACPI EC never binds
   (firmware never defines `ECON`), so `_Qxx` handlers are dead and
@@ -64,9 +67,16 @@ laptop (`dmesg | grep xiaomi-book14`, `sensors`, debugfs files).
 KDIR=/path/to/configured/linux scripts/check.sh   # must print ok twice
 ```
 
-Target kernels: 6.16 minimum, 6.18 LTS, and current mainline (7.x).
-Platform_profile API used is the post-6.14 `devm_platform_profile_register`
-+ `platform_profile_ops` form.
+Target kernels: 6.16 minimum, 6.18 LTS, and current mainline rc (the user
+runs rc kernels, CachyOS-style Clang builds). Before a release, check at
+least 6.18 (GCC) and the newest rc with both GCC and Clang. Platform_profile
+API used is the post-6.14 `devm_platform_profile_register` +
+`platform_profile_ops` form.
+
+Without a full kernel build (no Module.symvers) modpost cannot check
+imports; instead verify each `nm -u xiaomi-book14.o` symbol is exported in
+the target tree and not namespaced (`EXPORT_SYMBOL_NS*` needs
+`MODULE_IMPORT_NS`).
 
 ### Recreating the build env in a fresh cloud workspace
 
@@ -84,6 +94,13 @@ cd ~/kernel/linux-6.18 && make defconfig
 make olddefconfig && make modules_prepare        # ~15 s; enough for compile tests
 make -j"$(nproc)" vmlinux modules                # optional, slow: gives Module.symvers
 ```
+
+Newest rc: `git ls-remote --tags https://github.com/torvalds/linux 'v7.*'`.
+A Clang tree needs a separate clean checkout (O= refuses a used source
+tree): `git worktree add ../linux-X-clang <tag>`, then the same steps with
+`LLVM=1` on every make. To read a file from another release cheaply:
+`git fetch --depth 1 --filter=blob:none origin tag vX.Y` then
+`git show vX.Y:path` (raw.githubusercontent.com is blocked).
 
 ## Conventions
 

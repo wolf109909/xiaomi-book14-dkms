@@ -14,7 +14,9 @@ at their own risk.
 
 Requirements: x86_64, **Linux 6.16 or newer**, matching kernel headers.
 Kernels built with GCC or Clang both work (the Makefile picks the right
-toolchain from the kernel's `.config`).
+toolchain from the kernel's `.config`). Compile-tested on 6.18 LTS and
+7.3-rc7 (GCC and Clang); on 7.0+ the module uses the new buffer-based WMI
+API (`wmidev_invoke_method`).
 
 ## What works with this module
 

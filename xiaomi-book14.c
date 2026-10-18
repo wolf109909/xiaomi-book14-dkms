@@ -207,21 +207,39 @@ static unsigned long book14_poll_delay(uint ms)
 
 /* ---------- WMAA ---------- */
 
-static int book14_mifs_call(struct book14 *b, u16 op, u16 fun2, u16 fun3,
-			    struct mifs_out *out)
+/*
+ * Run WMAA (instance 0, method 1) and copy its 32-byte result into @res.
+ * Linux 7.0 added the buffer-based wmidev_invoke_method() and deprecated
+ * the ACPI-object based wmidev_evaluate_method(); use the new API where it
+ * exists and keep the old one for 6.16 - 6.19.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+static int book14_wmaa(struct book14 *b, const struct mifs_in *in,
+		       struct mifs_out *res)
 {
-	struct mifs_in in = {
-		.fun1 = cpu_to_le16(op),
-		.fun2 = cpu_to_le16(fun2),
-		.fun3 = cpu_to_le16(fun3),
+	const struct wmi_buffer in_buf = {
+		.length = sizeof(*in),
+		.data = (void *)in,
 	};
-	const struct acpi_buffer in_buf = { sizeof(in), &in };
-	struct acpi_buffer out_buf = { ACPI_ALLOCATE_BUFFER, NULL };
-	struct mifs_out res;
-	acpi_status status;
-	u16 sger;
+	struct wmi_buffer out_buf;
+	int ret;
 
-	guard(mutex)(&b->call_lock);
+	ret = wmidev_invoke_method(b->wdev, 0, 1, &in_buf, &out_buf,
+				   sizeof(*res));
+	if (ret)
+		return ret;
+
+	memcpy(res, out_buf.data, sizeof(*res));
+	kfree(out_buf.data);
+	return 0;
+}
+#else
+static int book14_wmaa(struct book14 *b, const struct mifs_in *in,
+		       struct mifs_out *res)
+{
+	const struct acpi_buffer in_buf = { sizeof(*in), (void *)in };
+	struct acpi_buffer out_buf = { ACPI_ALLOCATE_BUFFER, NULL };
+	acpi_status status;
 
 	status = wmidev_evaluate_method(b->wdev, 0, 1, &in_buf, &out_buf);
 	if (ACPI_FAILURE(status))
@@ -230,9 +248,30 @@ static int book14_mifs_call(struct book14 *b, u16 op, u16 fun2, u16 fun3,
 	union acpi_object *obj __free(kfree) = out_buf.pointer;
 
 	if (!obj || obj->type != ACPI_TYPE_BUFFER ||
-	    obj->buffer.length < sizeof(res))
+	    obj->buffer.length < sizeof(*res))
 		return -EIO;
-	memcpy(&res, obj->buffer.pointer, sizeof(res));
+	memcpy(res, obj->buffer.pointer, sizeof(*res));
+	return 0;
+}
+#endif
+
+static int book14_mifs_call(struct book14 *b, u16 op, u16 fun2, u16 fun3,
+			    struct mifs_out *out)
+{
+	const struct mifs_in in = {
+		.fun1 = cpu_to_le16(op),
+		.fun2 = cpu_to_le16(fun2),
+		.fun3 = cpu_to_le16(fun3),
+	};
+	struct mifs_out res;
+	u16 sger;
+	int ret;
+
+	guard(mutex)(&b->call_lock);
+
+	ret = book14_wmaa(b, &in, &res);
+	if (ret)
+		return ret;
 
 	sger = le16_to_cpu(res.sger);
 	if (sger != MIFS_STATUS_OK) {
