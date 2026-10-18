@@ -444,6 +444,11 @@ static int book14_profile_set(struct device *dev,
 	if (ret)
 		return ret;
 
+	/*
+	 * Tell the EC poll this change is ours: the platform_profile core
+	 * already notifies userspace, and it was not Fn+K.
+	 */
+	WRITE_ONCE(b->last_qfan, v);
 	book14_rapl_apply(b, v);
 	return 0;
 }
@@ -568,15 +573,16 @@ static void book14_check_lid(struct book14 *b)
 static void book14_check_qfan(struct book14 *b)
 {
 	u8 qfan = readb(b->ec + EC_REG_QFAN);
+	u8 last = READ_ONCE(b->last_qfan);
 
-	if (qfan != b->last_qfan) {
-		if (b->last_qfan != STATE_UNKNOWN) {
+	if (qfan != last) {
+		if (last != STATE_UNKNOWN) {
 			dev_info(&b->wdev->dev,
 				 "perf mode changed to 0x%02x (Fn+K or EC)\n",
 				 qfan);
 			platform_profile_notify(b->pp_dev);
 		}
-		b->last_qfan = qfan;
+		WRITE_ONCE(b->last_qfan, qfan);
 	}
 
 	book14_rapl_apply(b, qfan);
