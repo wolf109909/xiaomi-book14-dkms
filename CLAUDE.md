@@ -10,6 +10,11 @@ platform-driver-x86 derived from this module, so code here should stay
 close to mainline style (checkpatch --strict clean, devm everywhere,
 guard()/__free cleanup, no version #ifdefs beyond the 6.16 floor).
 
+**Upstream work in progress:** read `docs/upstream-status.md` first when
+the task involves LKML / platform-driver-x86, the bitland-mifs-wmi driver,
+or the QFAN profile mapping. It has the thread state, the plan, and the
+hardware data still to collect.
+
 ## Layout
 
 | File | Role |
